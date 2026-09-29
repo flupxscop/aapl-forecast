@@ -6,6 +6,6 @@ bin/
 obj/
 __pycache__/
 *.pyc
-data/
+/ml-service/data/
 .DS_Store
 *.pem
