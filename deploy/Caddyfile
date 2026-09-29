@@ -1,0 +1,23 @@
+# Public entry point. Caddy gets and renews the HTTPS certificate automatically.
+# SITE_ADDRESS comes from .env, e.g. 13-250-10-20.sslip.io (or ":80" for plain HTTP while testing).
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# .NET API (the browser calls /api/... on the same domain, so no CORS is needed)
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+
+	# Next.js website
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

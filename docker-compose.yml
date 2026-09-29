@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aapl_forecast
+      POSTGRES_USER: ${POSTGRES_USER:-aapl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aapl}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aapl} -d aapl_forecast"]
+      interval: 5s
+      retries: 20
+
+  ml:
+    build: ./ml-service
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aapl}:${POSTGRES_PASSWORD:-aapl}@db:5432/aapl_forecast
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+      DATA_DIR: /data/raw
+      MODEL_DIR: /data/models
+    volumes:
+      - mldata:/data
+      - ${KAGGLE_CONFIG_DIR:-~/.kaggle}:/root/.kaggle:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    environment:
+      ConnectionStrings__Postgres: Host=db;Port=5432;Database=aapl_forecast;Username=${POSTGRES_USER:-aapl};Password=${POSTGRES_PASSWORD:-aapl}
+      MlService__BaseUrl: http://ml:8000
+      Cors__Origins: http://localhost:3000
+      AdminApiKey: ${ADMIN_API_KEY:-}
+    ports:
+      - "5080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      ml:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:5080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  mldata:

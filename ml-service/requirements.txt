@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+numpy==2.2.1
+pandas==2.2.3
+scikit-learn==1.6.0
+joblib==1.4.2
+psycopg[binary]==3.2.3
+kaggle==1.6.17
+yfinance>=0.2.54
+pytest==8.3.4

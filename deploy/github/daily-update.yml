@@ -1,0 +1,49 @@
+# Daily data refresh for the free hosting setup (see DEPLOY_FREE.md).
+# Downloads prices, retrains the models and stores fresh forecasts in the hosted Postgres (Neon).
+name: Daily forecast update
+
+on:
+  schedule:
+    - cron: "30 22 * * *"   # 22:30 UTC = 05:30 Thailand, after the US market closes
+  workflow_dispatch: {}      # "Run workflow" button in the Actions tab
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: ml-service
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      DATA_DIR: /tmp/stock-data/raw
+      MODEL_DIR: /tmp/stock-data/models
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ml-service/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Add the DATABASE_URL secret (Settings > Secrets and variables > Actions)"; exit 1
+          fi
+
+      - name: Unit tests
+        run: python -m pytest -q
+
+      - name: Ingest, train and publish forecasts
+        run: python -m scripts.publish_forecasts

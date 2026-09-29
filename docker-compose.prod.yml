@@ -1,0 +1,98 @@
+# Production stack for a single server (e.g. AWS EC2).
+#   docker compose -f docker-compose.prod.yml up -d --build
+# Only Caddy is reachable from the internet (ports 80/443); everything else stays on the private network.
+name: stock-forecast
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aapl_forecast
+      POSTGRES_USER: ${POSTGRES_USER:-aapl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aapl} -d aapl_forecast"]
+      interval: 5s
+      retries: 30
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  ml:
+    build: ./ml-service
+    image: stock-forecast-ml
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aapl}:${POSTGRES_PASSWORD}@db:5432/aapl_forecast
+      KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+      KAGGLE_KEY: ${KAGGLE_KEY:-}
+      DATA_DIR: /data/raw
+      MODEL_DIR: /data/models
+    volumes:
+      - mldata:/data
+    depends_on:
+      db: { condition: service_healthy }
+    logging: *logging
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=db;Port=5432;Database=aapl_forecast;Username=${POSTGRES_USER:-aapl};Password=${POSTGRES_PASSWORD}
+      MlService__BaseUrl: http://ml:8000
+      Cors__Origins: https://${SITE_ADDRESS}
+      AdminApiKey: ${ADMIN_API_KEY:?Set ADMIN_API_KEY in .env}
+    depends_on:
+      db: { condition: service_healthy }
+      ml: { condition: service_started }
+    logging: *logging
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: "/"   # same origin: the browser calls /api/... through Caddy
+    restart: unless-stopped
+    depends_on: [backend]
+    logging: *logging
+
+  # Refreshes prices, retrains and re-forecasts every stock once a day.
+  scheduler:
+    build: ./ml-service          # same image as "ml" (the second build is a cache hit)
+    image: stock-forecast-ml
+    restart: unless-stopped
+    command: ["python", "-m", "scripts.scheduler"]
+    environment:
+      ML_URL: http://ml:8000
+      BACKEND_URL: http://backend:8080
+      UPDATE_TIME_UTC: ${UPDATE_TIME_UTC:-22:30}
+      FORECAST_HORIZON: ${FORECAST_HORIZON:-30}
+      RUN_ON_START: ${RUN_ON_START:-if-empty}
+    depends_on: [ml, backend]
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [frontend, backend]
+    logging: *logging
+
+volumes:
+  pgdata:
+  mldata:
+  caddy_data:
+  caddy_config:
